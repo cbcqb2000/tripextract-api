@@ -6,8 +6,8 @@
  * which is why this works when the Chrome extension itself cannot.
  */
 
-export default async function handler(req, res) {
-  // Allow requests from the Chrome extension and any origin
+module.exports = async function handler(req, res) {
+  // Allow requests from the Chrome extension and any browser origin
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -17,7 +17,7 @@ export default async function handler(req, res) {
 
   const videoId = req.query.v || req.query.videoId;
 
-  // Validate YouTube video ID format (always 11 chars)
+  // Validate — YouTube video IDs are always exactly 11 chars
   if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
     return res.status(400).json({ error: "Missing or invalid video ID. Use ?v=VIDEO_ID" });
   }
@@ -29,14 +29,14 @@ export default async function handler(req, res) {
     console.error(`[TripExtract] transcript error for ${videoId}:`, e.message);
     return res.status(500).json({ error: e.message });
   }
-}
+};
 
 // ─── Core fetcher ─────────────────────────────────────────────────────────────
 
 async function fetchTranscript(videoId) {
-  // Step 1: Fetch the YouTube watch page.
-  // Running server-side means no Sec-Fetch-*, X-Client-Data, or Origin headers —
-  // the exact headers that cause YouTube to return empty responses to extensions.
+  // Fetch the YouTube page server-side.
+  // No Sec-Fetch-*, X-Client-Data, or extension Origin headers here —
+  // exactly those headers cause YouTube to return empty from a browser extension.
   const pageResp = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
     headers: {
       "User-Agent":
@@ -46,87 +46,64 @@ async function fetchTranscript(videoId) {
     },
   });
 
-  if (!pageResp.ok) {
-    throw new Error(`YouTube page returned ${pageResp.status}`);
-  }
+  if (!pageResp.ok) throw new Error(`YouTube page returned ${pageResp.status}`);
 
   const html = await pageResp.text();
 
-  // Step 2: Extract ytInitialPlayerResponse (contains the caption track URLs)
   const playerResponse = extractJson(html, "ytInitialPlayerResponse");
-  if (!playerResponse) {
-    throw new Error("Could not find player data in YouTube page");
-  }
+  if (!playerResponse) throw new Error("Could not find player data in YouTube page");
 
-  const tracks =
-    playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+  const tracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+  if (!tracks?.length) throw new Error("No caption tracks found for this video");
 
-  if (!tracks?.length) {
-    throw new Error("No caption tracks found for this video");
-  }
-
-  // Step 3: Pick the best English caption track
+  // Pick the best English track (manual > ASR > any English > first available)
   const track =
-    tracks.find((t) => t.languageCode === "en" && !t.kind) || // manual English
-    tracks.find((t) => t.languageCode === "en") ||             // any English (incl. ASR)
-    tracks.find((t) => t.languageCode?.startsWith("en")) ||    // en-US, en-GB, etc.
-    tracks[0];                                                  // whatever exists
+    tracks.find((t) => t.languageCode === "en" && !t.kind) ||
+    tracks.find((t) => t.languageCode === "en") ||
+    tracks.find((t) => t.languageCode?.startsWith("en")) ||
+    tracks[0];
 
-  if (!track?.baseUrl) {
-    throw new Error("Caption track has no download URL");
-  }
+  if (!track?.baseUrl) throw new Error("Caption track has no download URL");
 
   const base = track.baseUrl.startsWith("http")
     ? track.baseUrl
     : "https://www.youtube.com" + track.baseUrl;
 
-  // Step 4: Fetch the caption content.
-  // Try JSON3 format first (easier to parse), then fall back to XML/TTML.
-  const urls = buildCaptionUrls(base);
+  // Try JSON3 format first, then fall back to the default (XML/TTML)
+  const urls = (() => {
+    try {
+      const u = new URL(base);
+      u.searchParams.set("fmt", "json3");
+      return [u.toString(), base];
+    } catch {
+      return [base + "&fmt=json3", base];
+    }
+  })();
 
   for (const url of urls) {
     const r = await fetch(url, {
       headers: { "Accept-Language": "en-US,en;q=0.9" },
     });
-
     const text = await r.text();
     if (!r.ok || !text.trim()) continue;
 
-    // JSON3 format
     if (text.trim().startsWith("{")) {
       try {
-        const data = JSON.parse(text);
-        const transcript = parseEvents(data?.events);
-        if (transcript) return transcript;
+        const t = parseEvents(JSON.parse(text)?.events);
+        if (t) return t;
       } catch {}
     }
-
-    // XML/TTML format (YouTube's default)
     if (text.includes("<text")) {
-      const transcript = parseXML(text);
-      if (transcript) return transcript;
+      const t = parseXML(text);
+      if (t) return t;
     }
-
-    // WebVTT format
     if (text.startsWith("WEBVTT")) {
-      const transcript = parseVTT(text);
-      if (transcript) return transcript;
+      const t = parseVTT(text);
+      if (t) return t;
     }
   }
 
   throw new Error("Caption URLs returned no usable content");
-}
-
-// ─── URL builder ──────────────────────────────────────────────────────────────
-
-function buildCaptionUrls(base) {
-  try {
-    const json3 = new URL(base);
-    json3.searchParams.set("fmt", "json3");
-    return [json3.toString(), base];
-  } catch {
-    return [base + "&fmt=json3", base];
-  }
 }
 
 // ─── Parsers ──────────────────────────────────────────────────────────────────
@@ -135,17 +112,9 @@ function parseEvents(events) {
   if (!events) return null;
   const text = events
     .filter((e) => e.segs)
-    .map((e) =>
-      e.segs
-        .map((s) => s.utf8 || "")
-        .join("")
-        .replace(/\n/g, " ")
-        .trim()
-    )
+    .map((e) => e.segs.map((s) => s.utf8 || "").join("").replace(/\n/g, " ").trim())
     .filter((l) => l.length > 0 && l !== "\u200b")
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
+    .join(" ").replace(/\s+/g, " ").trim();
   return text.length > 50 ? text : null;
 }
 
@@ -156,13 +125,8 @@ function parseXML(xml) {
   while ((m = re.exec(xml)) !== null) {
     const t = m[1]
       .replace(/<[^>]+>/g, "")
-      .replace(/&amp;/g, "&")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&#39;/g, "'")
-      .replace(/&quot;/g, '"')
-      .replace(/\n/g, " ")
-      .trim();
+      .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+      .replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/\n/g, " ").trim();
     if (t) parts.push(t);
   }
   const joined = parts.join(" ").replace(/\s+/g, " ").trim();
