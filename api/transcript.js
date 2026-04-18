@@ -30,8 +30,6 @@ module.exports = async function handler(req, res) {
   }
 
   // ── Mode 1: URL-proxy ──────────────────────────────────────────────────────
-  // Extension passes the signed timedtext URL it extracted from the page.
-  // We just fetch it server-side — clean, no browser fingerprint.
   if (req.query.url) {
     let captionUrl;
     try { captionUrl = decodeURIComponent(req.query.url); }
@@ -85,30 +83,73 @@ async function fetchCaptionUrl(baseUrl, videoId) {
     } catch { return [baseUrl + "&fmt=json3", baseUrl]; }
   })();
 
-  for (const url of urls) {
-    const r = await fetch(url, {
-      headers: {
-        "User-Agent": UA,
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": `https://www.youtube.com/watch?v=${videoId}`,
-        "Origin": "https://www.youtube.com",
-      },
-    });
-    const text = await r.text();
-    console.log(`[TripExtract] caption fetch: ${r.status} len=${text.length} fmt=${url.includes("fmt=json3") ? "json3" : "xml"}`);
-    if (!r.ok || !text.trim()) continue;
+  const log = [];
 
-    if (text.trim().startsWith("{")) {
-      try { const t = parseEvents(JSON.parse(text)?.events); if (t) return t; } catch {}
-    }
-    if (text.includes("<text")) {
-      const t = parseXML(text); if (t) return t;
-    }
-    if (text.startsWith("WEBVTT")) {
-      const t = parseVTT(text); if (t) return t;
+  for (const url of urls) {
+    const fmt = url.includes("fmt=json3") ? "json3" : "orig";
+    try {
+      // NOTE: No "Origin" header — setting Origin from a server IP while
+      // spoofing youtube.com triggers YouTube's CSRF / forgery detection.
+      // Referer alone is sufficient to identify the referencing page.
+      const r = await fetch(url, {
+        headers: {
+          "User-Agent": UA,
+          "Accept-Language": "en-US,en;q=0.9",
+          "Referer": `https://www.youtube.com/watch?v=${videoId}`,
+        },
+      });
+      const text = await r.text();
+      const preview = JSON.stringify(text.slice(0, 80));
+      log.push(`${fmt}:${r.status}:len=${text.length}:${preview}`);
+      console.log(`[TripExtract] caption ${fmt}: status=${r.status} len=${text.length} preview=${preview}`);
+
+      if (!r.ok || !text.trim()) continue;
+
+      // JSON3 format ({"events":[{"segs":[{"utf8":"..."}]}]})
+      if (text.trim().startsWith("{")) {
+        try {
+          const data = JSON.parse(text);
+          const evts = data?.events || [];
+          log.push(`json:events=${evts.length}:with-segs=${evts.filter(e => e.segs).length}`);
+          const t = parseEvents(evts);
+          if (t) return t;
+        } catch (e) { log.push(`json-parse-err:${e.message}`); }
+      }
+
+      // Standard YouTube XML (timedtext format with <text> tags)
+      if (text.includes("<text")) {
+        const t = parseXML(text);
+        if (t) return t;
+        log.push("xml:<text>-parse-failed");
+      }
+
+      // TTML format (W3C standard, uses <p> tags)
+      if (text.includes("<p ") || text.includes("<p>")) {
+        const t = parseTTML(text);
+        if (t) return t;
+        log.push("ttml:<p>-parse-failed");
+      }
+
+      // WebVTT format
+      if (text.startsWith("WEBVTT")) {
+        const t = parseVTT(text);
+        if (t) return t;
+        log.push("vtt-parse-failed");
+      }
+
+      // SRV3 / any XML with text-like content
+      if (text.includes("<?xml") || text.includes("<transcript")) {
+        const t = parseGenericXML(text);
+        if (t) return t;
+        log.push("generic-xml-failed");
+      }
+
+    } catch (e) {
+      log.push(`${fmt}:fetch-err:${e.message}`);
     }
   }
-  throw new Error("caption URL returned no usable content");
+
+  throw new Error("no usable content [" + log.join(" || ") + "]");
 }
 
 // ─── Innertube API ────────────────────────────────────────────────────────────
@@ -221,6 +262,7 @@ function parseEvents(events) {
     .join(" ").replace(/\s+/g, " ").trim();
   return text.length > 50 ? text : null;
 }
+
 function parseXML(xml) {
   const parts = [];
   const re = /<text[^>]*>([\s\S]*?)<\/text>/g;
@@ -235,6 +277,33 @@ function parseXML(xml) {
   const joined = parts.join(" ").replace(/\s+/g, " ").trim();
   return joined.length > 50 ? joined : null;
 }
+
+function parseTTML(ttml) {
+  // W3C TTML / EBU-TT format — uses <p> tags for caption segments
+  const parts = [];
+  const re = /<p[^>]*>([\s\S]*?)<\/p>/g;
+  let m;
+  while ((m = re.exec(ttml)) !== null) {
+    const t = m[1]
+      .replace(/<[^>]+>/g, "")
+      .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+      .replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/\n/g, " ").trim();
+    if (t) parts.push(t);
+  }
+  const joined = parts.join(" ").replace(/\s+/g, " ").trim();
+  return joined.length > 50 ? joined : null;
+}
+
+function parseGenericXML(xml) {
+  // Strip all tags, decode entities, collapse whitespace
+  const text = xml
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&#39;/g, "'").replace(/&quot;/g, '"')
+    .replace(/\s+/g, " ").trim();
+  return text.length > 100 ? text : null;
+}
+
 function parseVTT(vtt) {
   const parts = []; let prev = "";
   for (const line of vtt.split("\n")) {
@@ -245,6 +314,7 @@ function parseVTT(vtt) {
   const joined = parts.join(" ").replace(/\s+/g, " ").trim();
   return joined.length > 50 ? joined : null;
 }
+
 function extractJson(html, varName) {
   const idx = html.indexOf(varName);
   if (idx === -1) return null;
