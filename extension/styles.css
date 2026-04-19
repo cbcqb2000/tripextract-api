@@ -232,6 +232,13 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.place-name:hover {
+  color: var(--brand);
+  text-decoration: underline;
 }
 
 .place-meta {
@@ -297,22 +304,6 @@ body {
 
 .btn-maps:hover { background: var(--brand-dark); }
 
-.btn-website {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 7px 11px;
-  background: white;
-  color: var(--brand);
-  border: 1px solid var(--brand);
-  border-radius: 7px;
-  cursor: pointer;
-  text-decoration: none;
-  transition: background 0.15s, color 0.15s;
-  flex-shrink: 0;
-}
-
-.btn-website:hover { background: var(--brand); color: white; }
 
 .rating-reviews-link {
   margin-left: 6px;
