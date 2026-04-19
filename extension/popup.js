@@ -2,6 +2,8 @@
  * TripExtract — Popup Script
  */
 
+const TRIPEXTRACT_API = "https://tripextract-api.vercel.app";
+
 // ─── State ────────────────────────────────────────────────────────────────────
 
 const state = {
@@ -30,6 +32,22 @@ document.addEventListener("DOMContentLoaded", async () => {
     state.videoInfo = info;
   } catch {
     state.videoInfo = { title: tab.title?.replace(" - YouTube", "").trim() };
+  }
+
+  // Restore last results for this video if available
+  const videoId = new URL(tab.url).searchParams.get("v");
+  if (videoId) {
+    try {
+      const stored = await chrome.storage.local.get(`results_${videoId}`);
+      const saved  = stored[`results_${videoId}`];
+      if (saved?.places?.length) {
+        state.places        = saved.places;
+        state.verifiedCount = saved.verifiedCount || 0;
+        state.view          = "results";
+        render();
+        return;
+      }
+    } catch { /* ignore */ }
   }
 
   state.view = "idle";
@@ -215,11 +233,13 @@ function buildPlaceCard(place, index) {
        </span>`
     : "";
 
+  const reviewsUrl = place.reviewsUrl || (place.placeId ? `https://search.google.com/local/reviews?placeid=${place.placeId}` : null);
   const ratingLine = place.verified && place.rating
     ? `<div class="place-rating">
          <span class="stars">${renderStars(place.rating)}</span>
          <span class="rating-num">${place.rating.toFixed(1)}</span>
          ${place.userRatingCount ? `<span class="rating-count">(${formatCount(place.userRatingCount)})</span>` : ""}
+         ${reviewsUrl ? `<a class="rating-reviews-link" href="${reviewsUrl}" target="_blank" rel="noopener">Reviews →</a>` : ""}
        </div>`
     : "";
 
@@ -228,7 +248,6 @@ function buildPlaceCard(place, index) {
     <div class="place-card ${place.verified ? "place-card--verified" : ""} ${isSelected ? "place-card--selected" : ""}" data-index="${index}">
       <div class="place-card-top place-card-check">
         <input type="checkbox" class="place-checkbox" data-check="${index}" ${isSelected ? "checked" : ""}>
-        <div class="place-type-badge">${emoji}</div>
         <div class="place-name-block">
           <div class="place-name-row">
             <div class="place-name" title="${esc(place.name)}">${esc(place.name)}</div>
@@ -247,6 +266,12 @@ function buildPlaceCard(place, index) {
           </svg>
           ${place.verified ? "Open in Maps" : "Search in Maps"}
         </a>
+        ${place.websiteUrl ? `
+        <a class="btn-website" href="${place.websiteUrl}" target="_blank" rel="noopener" title="Visit website">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+          </svg>
+        </a>` : ""}
         <button class="btn-copy-card" data-copy="${index}" title="Copy place info">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
             <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
@@ -313,35 +338,99 @@ function attachEvents() {
   });
 }
 
-// ─── Email selected ───────────────────────────────────────────────────────────
+// ─── Email modal ──────────────────────────────────────────────────────────────
 
 function handleEmailSelected() {
   const selectedPlaces = [...state.selected]
     .sort((a, b) => a - b)
     .map((i) => state.places[i]);
 
-  const videoTitle = state.videoInfo?.title || "YouTube Travel Video";
-  const subject    = encodeURIComponent(`Places from "${videoTitle}"`);
+  showEmailModal(selectedPlaces);
+}
 
-  const lines = selectedPlaces.map((p, n) => {
-    const emoji = TYPE_EMOJI[p.type] || "📍";
-    let line = `${n + 1}. ${emoji} ${p.name}`;
-    if (p.address)       line += `\n   📍 ${p.address}`;
-    else if (p.city)     line += `\n   📍 ${p.city}`;
-    if (p.rating)        line += `\n   ⭐ ${p.rating.toFixed(1)}`;
-    if (p.knownFor)      line += `\n   ${p.knownFor}`;
-    if (p.dishes)        line += `\n   Try: ${p.dishes}`;
-    line += `\n   ${buildMapsUrl(p)}`;
-    return line;
+function showEmailModal(places) {
+  // Remove any existing modal
+  document.getElementById("emailModal")?.remove();
+
+  const modal = document.createElement("div");
+  modal.id = "emailModal";
+  modal.className = "email-modal-overlay";
+  modal.innerHTML = `
+    <div class="email-modal">
+      <div class="email-modal-header">
+        <span>Send ${places.length} place${places.length !== 1 ? "s" : ""} to email</span>
+        <button class="email-modal-close" id="emailModalClose">✕</button>
+      </div>
+      <div class="email-modal-body">
+        <input
+          type="email"
+          id="emailModalInput"
+          class="email-modal-input"
+          placeholder="your@email.com"
+          autocomplete="email"
+        />
+        <button class="email-modal-send" id="emailModalSend">Send</button>
+      </div>
+      <div class="email-modal-status" id="emailModalStatus"></div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  document.getElementById("emailModalClose").addEventListener("click", () => modal.remove());
+  modal.addEventListener("click", (e) => { if (e.target === modal) modal.remove(); });
+
+  const input = document.getElementById("emailModalInput");
+  input.focus();
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") sendEmail(places, modal);
   });
 
-  const body = encodeURIComponent(
-    `Here are ${selectedPlaces.length} place${selectedPlaces.length !== 1 ? "s" : ""} from "${videoTitle}":\n\n` +
-    lines.join("\n\n") +
-    "\n\n— Sent via TripExtract"
-  );
+  document.getElementById("emailModalSend").addEventListener("click", () => {
+    sendEmail(places, modal);
+  });
+}
 
-  window.open(`mailto:?subject=${subject}&body=${body}`, "_blank");
+async function sendEmail(places, modal) {
+  const input  = document.getElementById("emailModalInput");
+  const status = document.getElementById("emailModalStatus");
+  const btn    = document.getElementById("emailModalSend");
+  const to     = input.value.trim();
+
+  if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+    status.textContent = "Please enter a valid email address.";
+    status.className   = "email-modal-status error";
+    return;
+  }
+
+  btn.disabled    = true;
+  btn.textContent = "Sending…";
+  status.textContent = "";
+  status.className   = "email-modal-status";
+
+  try {
+    const videoTitle = state.videoInfo?.title || "YouTube Travel Video";
+    const resp = await fetch(`${TRIPEXTRACT_API}/api/email`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to, videoTitle, places }),
+    });
+
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || "Send failed");
+
+    status.textContent = "Sent! Check your inbox.";
+    status.className   = "email-modal-status success";
+    btn.textContent    = "Sent ✓";
+
+    setTimeout(() => modal.remove(), 2000);
+  } catch (e) {
+    status.textContent = e.message || "Something went wrong. Try again.";
+    status.className   = "email-modal-status error";
+    btn.disabled    = false;
+    btn.textContent = "Send";
+  }
 }
 
 // ─── Extract flow ─────────────────────────────────────────────────────────────
@@ -390,6 +479,18 @@ async function handleExtract() {
     state.places        = response.places;
     state.verifiedCount = response.verifiedCount || 0;
     state.view          = "results";
+
+    // Persist results so they survive popup close/reopen
+    const videoId = new URL(tab.url).searchParams.get("v");
+    if (videoId) {
+      chrome.storage.local.set({
+        [`results_${videoId}`]: {
+          places:        state.places,
+          verifiedCount: state.verifiedCount,
+        },
+      });
+    }
+
     render();
   } catch (err) {
     state.view     = "error";
