@@ -208,6 +208,11 @@ function buildPlaceCard(place, index) {
     ? place.type.charAt(0).toUpperCase() + place.type.slice(1)
     : "Place";
 
+  // Name link: website if available, else Google search (always present)
+  const nameHref = place.websiteUrl
+    ? place.websiteUrl
+    : `https://www.google.com/search?q=${encodeURIComponent([place.name, place.city].filter(Boolean).join(" "))}`;
+
   const addressLine = place.address
     ? `<div class="place-address">
          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
@@ -250,7 +255,7 @@ function buildPlaceCard(place, index) {
         <input type="checkbox" class="place-checkbox" data-check="${index}" ${isSelected ? "checked" : ""}>
         <div class="place-name-block">
           <div class="place-name-row">
-            <div class="place-name" title="${esc(place.name)}">${esc(place.name)}</div>
+            <a class="place-name" href="${nameHref}" target="_blank" rel="noopener" title="${esc(place.name)}">${esc(place.name)}</a>
             ${verifiedBadge}
           </div>
           <div class="place-meta">${typeLabel}${place.since ? ` · Est. ${place.since}` : ""}</div>
@@ -266,12 +271,6 @@ function buildPlaceCard(place, index) {
           </svg>
           ${place.verified ? "Open in Maps" : "Search in Maps"}
         </a>
-        ${place.websiteUrl ? `
-        <a class="btn-website" href="${place.websiteUrl}" target="_blank" rel="noopener" title="Visit website">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
-          </svg>
-        </a>` : ""}
         <button class="btn-copy-card" data-copy="${index}" title="Copy place info">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
             <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
