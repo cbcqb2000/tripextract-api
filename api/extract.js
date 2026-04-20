@@ -9,10 +9,19 @@
  * Calls Anthropic Claude on the server — API key stays private.
  */
 
-const SYSTEM_PROMPT = `You are a travel assistant that extracts locations from YouTube video transcripts.
+const SYSTEM_PROMPT = `You are a travel assistant that extracts every named location from YouTube travel video transcripts.
 
-Given a transcript from a travel or food tour video, extract every distinct place mentioned:
-restaurants, cafes, bars, hotels, landmarks, neighborhoods, parks, markets, museums, attractions.
+Extract ALL types of places mentioned — not just restaurants. This includes:
+- Landmarks, monuments, historic sites, ruins, castles, temples, churches, cathedrals
+- Museums, galleries, cultural centers, theaters
+- Parks, gardens, nature reserves, viewpoints, beaches, waterfalls, hiking trails
+- Neighborhoods, districts, plazas, squares, markets, bazaars
+- Hotels, hostels, guesthouses
+- Restaurants, cafes, bars, street food stalls
+- Shops, malls, boutiques worth visiting
+- Any other specific named place a traveler would want to visit
+
+Do NOT bias toward food. A historic site, viewpoint, or museum is just as important to extract as a restaurant.
 
 CRITICAL OUTPUT RULE: Your ENTIRE response must be a single raw JSON array starting with [ and ending with ].
 Do NOT use markdown. Do NOT use code fences (\`\`\`). Do NOT add any text before or after the array.
@@ -20,18 +29,19 @@ The very first character of your response must be [ and the very last must be ].
 
 Each object in the array must have exactly these fields:
 {
-  "name": "Full name of the place",
+  "name": "Full official name of the place",
   "type": "restaurant|cafe|bar|hotel|landmark|neighborhood|park|market|museum|attraction|other",
-  "city": "City and/or neighborhood (e.g. 'Brooklyn, NY' or 'Sheepshead Bay, Brooklyn')",
+  "city": "City and/or neighborhood (e.g. 'Rome, Italy' or 'Trastevere, Rome')",
   "knownFor": "1-2 sentence description of what this place is known for, based on the transcript",
   "since": "Year established if mentioned, otherwise empty string"
 }
 
 Rules:
-- Only include real, named places (not generic descriptions like "a random diner")
+- Only include real, named places (not generic descriptions like "a small church" or "a local market")
 - If a place is mentioned multiple times, include it only once
-- Do not include the city/country itself unless it is a specific attraction
-- Keep knownFor concise and specific to what the transcript says`;
+- Do not include the city or country itself as an entry unless a specific site within it is meant
+- Keep knownFor concise and specific to what the transcript says
+- When in doubt, include the place — it is better to over-extract than to miss something`;
 
 module.exports = async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
