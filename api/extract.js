@@ -9,19 +9,11 @@
  * Calls Anthropic Claude on the server — API key stays private.
  */
 
-const SYSTEM_PROMPT = `You are a travel assistant that extracts every named location from YouTube travel video transcripts.
+const SYSTEM_PROMPT = `You are a travel location extractor. Your job is to find every specific place mentioned in a travel video transcript.
 
-Extract ALL types of places mentioned — not just restaurants. This includes:
-- Landmarks, monuments, historic sites, ruins, castles, temples, churches, cathedrals
-- Museums, galleries, cultural centers, theaters
-- Parks, gardens, nature reserves, viewpoints, beaches, waterfalls, hiking trails
-- Neighborhoods, districts, plazas, squares, markets, bazaars
-- Hotels, hostels, guesthouses
-- Restaurants, cafes, bars, street food stalls
-- Shops, malls, boutiques worth visiting
-- Any other specific named place a traveler would want to visit
+EXTRACT EVERYTHING — museums, sculptures, buildings, parks, historic sites, neighborhoods, viewpoints, monuments, halls of fame, stadiums, bridges, markets, restaurants, bars, hotels, and any other place a visitor would go. If the video title says "27 stops", find all 27.
 
-Do NOT bias toward food. A historic site, viewpoint, or museum is just as important to extract as a restaurant.
+Use the video title as a strong hint. If the title mentions a number of stops or places, you should find approximately that many. Use your knowledge of the city to fill in official place names when the transcript uses a short or informal reference (e.g. "the rock hall" → "Rock and Roll Hall of Fame").
 
 CRITICAL OUTPUT RULE: Your ENTIRE response must be a single raw JSON array starting with [ and ending with ].
 Do NOT use markdown. Do NOT use code fences (\`\`\`). Do NOT add any text before or after the array.
@@ -31,17 +23,18 @@ Each object in the array must have exactly these fields:
 {
   "name": "Full official name of the place",
   "type": "restaurant|cafe|bar|hotel|landmark|neighborhood|park|market|museum|attraction|other",
-  "city": "City and/or neighborhood (e.g. 'Rome, Italy' or 'Trastevere, Rome')",
-  "knownFor": "1-2 sentence description of what this place is known for, based on the transcript",
+  "city": "City and state/country (e.g. 'Cleveland, OH' or 'Trastevere, Rome')",
+  "knownFor": "1-2 sentence description of what this place is known for",
   "since": "Year established if mentioned, otherwise empty string"
 }
 
 Rules:
-- Only include real, named places (not generic descriptions like "a small church" or "a local market")
+- NEVER return just the city name as a place — always return the specific sites within it
+- Include a place even if only briefly mentioned or shown
 - If a place is mentioned multiple times, include it only once
-- Do not include the city or country itself as an entry unless a specific site within it is meant
-- Keep knownFor concise and specific to what the transcript says
-- When in doubt, include the place — it is better to over-extract than to miss something`;
+- Use your world knowledge to infer the full official name from nicknames or short references
+- Keep knownFor concise and informative
+- It is always better to include too many places than to miss one`;
 
 module.exports = async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -78,7 +71,7 @@ module.exports = async function handler(req, res) {
         system: SYSTEM_PROMPT,
         messages: [{
           role: "user",
-          content: `Video title: "${videoTitle || "Unknown"}"\n\nTranscript:\n${truncated}\n\nExtract all places mentioned in this video.`,
+          content: `Video title: "${videoTitle || "Unknown"}"\n\nIMPORTANT: The title above tells you what city and approximately how many places to find. Extract every single one.\n\nTranscript:\n${truncated}\n\nExtract every place mentioned or implied in this video. Do not return the city itself — return the specific sites, attractions, and locations within it.`,
         }],
       }),
     });
