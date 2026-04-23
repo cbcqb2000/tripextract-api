@@ -184,7 +184,11 @@ function buildResultsHTML() {
     <div class="places-list">
       ${state.places.map((p, i) => buildPlaceCard(p, i)).join("")}
     </div>
-    ${actionBar}`;
+    ${actionBar}
+    <div class="google-attribution">
+      <img src="https://maps.gstatic.com/mapfiles/api-3/images/powered-by-google-on-white3.png"
+           alt="Powered by Google" height="18">
+    </div>`;
 }
 
 const TYPE_EMOJI = {
