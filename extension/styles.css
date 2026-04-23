@@ -691,3 +691,14 @@ body {
 
 .email-modal-status.error   { color: #D32F2F; }
 .email-modal-status.success { color: #2E7D32; font-weight: 600; }
+
+/* ─── Google Attribution ──────────────────────────────────────────────────── */
+
+.google-attribution {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 8px 16px 12px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
