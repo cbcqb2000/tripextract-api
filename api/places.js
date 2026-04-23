@@ -9,6 +9,8 @@
  * Calls Google Places API (New) on the server — API key stays private.
  */
 
+const { check, MAX_PLACES } = require("./_rateLimit");
+
 module.exports = async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -16,6 +18,7 @@ module.exports = async function handler(req, res) {
 
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  if (!check(req, res, MAX_PLACES)) return; // rate limited
 
   const { name, city } = req.body || {};
   if (!name || typeof name !== "string") {
@@ -37,7 +40,7 @@ module.exports = async function handler(req, res) {
         "X-Goog-FieldMask":
           "places.id,places.displayName,places.formattedAddress," +
           "places.location,places.rating,places.userRatingCount," +
-          "places.photos,places.googleMapsUri",
+          "places.photos,places.googleMapsUri,places.websiteUri",
       },
       body: JSON.stringify({ textQuery: query, maxResultCount: 1 }),
     });
@@ -62,6 +65,8 @@ module.exports = async function handler(req, res) {
       userRatingCount: result.userRatingCount    || null,
       photoRef:        result.photos?.[0]?.name  || null,
       mapsUrl:         result.googleMapsUri      || `https://www.google.com/maps/place/?q=place_id:${placeId}`,
+      websiteUrl:      result.websiteUri         || null,
+      reviewsUrl:      `https://search.google.com/local/reviews?placeid=${placeId}`,
     });
   } catch (e) {
     console.error("[TripExtract] places error:", e.message);
