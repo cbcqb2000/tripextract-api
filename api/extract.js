@@ -9,6 +9,8 @@
  * Calls Anthropic Claude on the server — API key stays private.
  */
 
+const { check, MAX_EXTRACT } = require("./_rateLimit");
+
 const SYSTEM_PROMPT = `You are a travel location extractor. Your job is to find every specific place mentioned in a travel video transcript.
 
 EXTRACT EVERYTHING — museums, sculptures, buildings, parks, historic sites, neighborhoods, viewpoints, monuments, halls of fame, stadiums, bridges, markets, restaurants, bars, hotels, and any other place a visitor would go. If the video title says "27 stops", find all 27.
@@ -43,6 +45,7 @@ module.exports = async function handler(req, res) {
 
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  if (!check(req, res, MAX_EXTRACT)) return; // rate limited
 
   const { transcript, videoTitle } = req.body || {};
   if (!transcript || typeof transcript !== "string") {
