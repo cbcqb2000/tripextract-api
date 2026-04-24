@@ -38,7 +38,7 @@ module.exports = async function handler(req, res) {
         "Authorization": `Bearer ${resendKey}`,
       },
       body: JSON.stringify({
-        from: "TripExtract <trips@shifthandoff.com>",
+        from: "TripExtract <trips@xtractli.com>",
         to: [to],
         subject: `Your places from "${videoTitle || "YouTube video"}"`,
         html,
